@@ -1,0 +1,57 @@
+.012
+  - Rename flame to fflame, tweaked function
+  - Tidied code+docs, update SYNOPSIS
+  - Add stereo map (thx jhewitt)
+  - mandel + dmandel output is now supersampled
+  - Tweaked dmandel interestingness criteria
+  - Rename to Math::Fractal::Noisemaker
+  - Tweak DLA seeding
+  - Re-wrote ex/make-samples as t/Noisemaker.t; accepts args
+
+.011
+  - Fixes for ridged, shadow, displace
+
+.010
+  - Added fur, dmandel, diffusion, flame, infile, intile,
+    spiral, voronoi, moire, textile, delta, chiral types
+  - Removed rgel, it was too close to pgel
+  - Even more futzing with spheremaps, poles conform better now
+  - Smoothed input for gel noise
+  - Code cleanup
+
+.009
+  - Added wavelet, mandel, buddha, fern functions
+
+.008
+  - Add missing POD header
+
+.007
+  - Added traditional smoothed noise source for Perlin
+  - Many new options for combining noise sources
+  - New noise types: ridged multifractal and "gel" types
+  - Added some simple color mapping options
+  - More futzing with spheremap scaling
+  - Added gappiness option (ie for starfields)
+  - Tweaked defaults for about 500 reasonable complex noise presets
+  - Rewrote POD
+
+.006
+  - Added a script to generate lots of example noise
+  - Tweaked scale at polar regions to more closely match look of equator
+  - Refractive spheremaps should look better
+
+.005
+  - Added spheremap option! They're fake but good.
+  - Added refractive palette option, looks like fractals
+  - Fixed bug with size of output images, was off by one in smooth function
+  - Added $QUIET option
+  - Allow negative feather vals for cool effects
+  - Complex noise now skips an un-needed smoothing step
+  - Tweaked default args
+
+.004
+  - Added example images to ex/ dir and inline with pod
+
+Sep 2009: .001
+  - Initial release
+
