@@ -1,18 +1,21 @@
 package Math::Fractal::Noisemaker;
 
-our $VERSION = '0.013';
+our $VERSION = '0.014';
 
 use strict;
 use warnings;
 
 use Imager;
+use Math::Complex;
+use Math::Random::Brownian;
 use Math::Trig qw| :radial deg2rad tan pi |;
 
 use base qw| Exporter |;
 
 our @SIMPLE_TYPES = qw|
-  white wavelet square gel sgel stars spirals voronoi dla fflame
-  mandel dmandel buddha fern gasket infile intile moire textile sparkle
+  white wavelet square gel sgel stars spirals voronoi dla
+  fflame mandel dmandel buddha fern gasket julia djulia newton
+  infile intile moire textile sparkle brownian gaussian
   |;
 
 our @PERLIN_TYPES = qw|
@@ -67,6 +70,9 @@ sub showTypes {
   print "  * mandel          ## Mandelbrot (demo)\n";
   print "  * dmandel         ## \"deep\" mandel\n";
   print "  * buddha          ## buddhabrot\n";
+  print "  * julia           ## Julia set\n";
+  print "  * djulia          ## \"deep\" julia\n";
+  print "  * newton          ## Newton fractal (demo)\n";
   print "  * fflame          ## IFS fractal flame\n";
   print "  * fern            ## IFS fern (demo)\n";
   print "  * gasket          ## IFS gasket (demo)\n";
@@ -79,6 +85,8 @@ sub showTypes {
   print "  * infile          ## image file named by 'in' arg\n";
   print "  * intile          ## input file + blends edges\n";
   print "  * sparkle         ## stylized stars\n";
+  print "  * brownian        ## fractional brownian\n";
+  print "  * gaussian        ## fractional gaussian\n";
   print "\n";
   print "  ! perlin          ## multi-resolution\n";
   print "  ! ridged          ## ridged multifractal\n";
@@ -95,7 +103,7 @@ sub showTypes {
   print "\n";
   print "Legend:";
   print "\n";
-  print "  * simple type: may be used as a Perlin slice type (stype)\n";
+  print "  * single-res type: may be used as a multi-res slice type (stype)\n";
   print "  ! control basis func via 'stype'\n";
   print " !! control basis funcs via 'ltype' and/or 'stype'\n";
   print "!!! control basis funcs via 'lbase', 'ltype' and/or 'stype'\n";
@@ -111,7 +119,7 @@ sub usage {
   print "Usage:\n";
   print "$0 \\\n";
   print "  [-type <noisetype>] \\             ## noise type\n";
-  print "  [-stype <simple type>]\\           ## perlin slice type\n";
+  print "  [-stype <single-res type>]\\       ## multi-res slice type\n";
   print "  [-lbase <any type but complex>] \\ ## complex basis\n";
   print "  [-ltype <any type but complex>] \\ ## complex layer\n";
   print "  [-amp <num>] \\              ## base amplitude (eg .5)\n";
@@ -142,7 +150,7 @@ sub usage {
   print "\n";
   print "For a list of available noise types, run:\n";
   print "\n";
-  print "  $0 --help types\n";
+  print "  $0 -help types\n";
   print "\n";
   print "perldoc Math::Fractal::Noisemaker for more help.\n";
   print "\n";
@@ -234,7 +242,7 @@ sub make {
   my $format = $args{format} || "bmp";
 
   if ( !$Imager::formats{$format} ) {
-    my $formats = join(",", sort keys %Imager::formats);
+    my $formats = join( ",", sort keys %Imager::formats );
 
     usage("Unsupported format: $format (choose: $formats)");
   }
@@ -277,7 +285,7 @@ sub make {
   if ( $args{workdir} ) {
     usage("workdir does not exist") if !-e $args{workdir};
 
-    $args{out} = join("/", $args{workdir}, $args{out});
+    $args{out} = join( "/", $args{workdir}, $args{out} );
   }
 
   # XXX
@@ -334,7 +342,7 @@ sub defaultArgs {
   $args{type}    ||= $defaultType;
   $args{freq}    ||= 8;
   $args{len}     ||= $defaultLen;
-  $args{octaves} ||= 6;
+  $args{octaves} ||= 4;
 
   $args{amp} = .5 if !defined $args{amp};
 
@@ -912,7 +920,7 @@ sub pgel {
 
   my $grid = perlin(%args);
 
-  $args{offset} = 2 if !defined $args{offset};
+  $args{displace} = 2 if !defined $args{displace};
 
   %args = defaultArgs(%args);
 
@@ -1338,7 +1346,7 @@ sub fflame {
 
   my $grid = grid( %args, len => $freq );
 
-  my $steps = $freq * $freq * 100;
+  my $steps = $args{maxiter} || $freq * $freq * 100;
 
   my $A = rand(.125) + .25;
   my $B = rand(.125) + .25;
@@ -1352,15 +1360,8 @@ sub fflame {
   my $x = 0;
   my $y = 0;
 
-  my $semifreq = $freq / 2;
-
   my $finalX = rand($freq);
   my $finalY = rand($freq);
-
-  # my $postX = rand(10);
-  # my $postY = rand(10);
-  my $postX = rand($freq);
-  my $postY = rand($freq);
 
   for ( my $n = 0 ; $n < $steps ; $n++ ) {
     do {
@@ -1388,7 +1389,9 @@ sub fflame {
 
   $grid = densemap($grid);
 
-  return glow( grow( $grid, %args ), %args );
+  $grid = glow( $grid, %args );
+
+  return grow( $grid, %args );
 }
 
 sub densemap {
@@ -1439,7 +1442,7 @@ sub fern {
 
   %args = defaultArgs(%args);
 
-  my $grid = grid(%args);
+  my $grid = grid(%args, len => $freq);
 
   for ( my $x = 0 ; $x < $freq ; $x++ ) {
     for ( my $y = 0 ; $y < $freq ; $y++ ) {
@@ -1517,8 +1520,6 @@ sub mandel {
 
   %args = defaultArgs(%args);
 
-  my $grid = grid(%args);
-
   my $freq = $args{freq};
 
   my $iters = $args{maxiter} || $freq;
@@ -1526,6 +1527,8 @@ sub mandel {
   my $scale = $args{zoom} || 1;
 
   $freq *= 2;
+
+  my $grid = grid( %args, len => $freq );
 
   for ( my $x = 0 ; $x < $freq ; $x += 1 ) {
     my $cx = ( $x / $freq ) * 2 - 1;
@@ -1543,6 +1546,7 @@ sub mandel {
         my $new_zx = $zx * $zx - $zy * $zy + $cx;
         $zy = 2 * $zx * $zy + $cy;
         $zx = $new_zx;
+
         $n++;
       }
 
@@ -1603,11 +1607,11 @@ sub dmandel {
 
   my $tuple = $interesting[ rand(@interesting) ];
 
-  my $scale = $args{zoom} || 1024 + rand(1024);
+  my $scale = $args{zoom} || 5120 + rand(128);
 
   $freq *= 2;
 
-  my $grid = grid( %args, freq => $freq );
+  my $grid = grid( %args, len => $freq );
 
   for ( my $x = 0 ; $x < $freq ; $x += 1 ) {
     my $cx = ( $x / $freq ) * 2 - 1;
@@ -1643,7 +1647,11 @@ sub dmandel {
     printRow( $grid->[$x] );
   }
 
-  return shrink( $grid, %args );
+  $grid = shrink( $grid, %args );
+
+  $grid = grow( $grid, %args );
+
+  return $grid;
 }
 
 sub buddha {
@@ -1789,13 +1797,9 @@ sub cartCoords {
   my $scale = shift || 1;
 
   my $thisLen = $len * $scale;
-  $x *= $scale;
-  $y *= $scale;
 
-  $x -= $thisLen if $x > $thisLen;
-  $y -= $thisLen if $y > $thisLen;
-  $x += $thisLen if $x < 0;
-  $y += $thisLen if $y < 0;
+  $x = ( $x * $scale ) % $thisLen;
+  $y = ( $y * $scale ) % $thisLen;
 
   my $theta = deg2rad( ( $x / $thisLen ) * 360 );
   my $phi   = deg2rad( ( $y / $thisLen ) * 90 );
@@ -2006,10 +2010,10 @@ sub dla {
 
   my $len = $args{freq};
 
-  my $grid = grid(%args, bias => 0);
+  my $grid = grid( %args, bias => 0, len => $len );
 
-  for ( my $i = 0; $i <= sqrt($len); $i++ ) {
-    $grid->[rand($len)]->[rand($len)] = $maxColor;
+  for ( my $i = 0 ; $i <= sqrt($len) ; $i++ ) {
+    $grid->[ rand($len) ]->[ rand($len) ] = $maxColor;
   }
 
   my @points;
@@ -2507,6 +2511,315 @@ sub stereo {
   return glow( $out, %args );
 }
 
+sub gaussian {
+  return brownian( @_, btype => "Gaussian" );
+}
+
+sub brownian {
+  my %args = @_;
+
+  my $type = $args{btype} || "Brownian";
+
+  print "Generating $type noise...\n" if !$QUIET;
+
+  $args{len} ||= $defaultLen;
+  $args{freq} = $args{len} if !defined $args{freq};
+
+  %args = defaultArgs(%args);
+
+  my $len = $args{freq};
+
+  my $grid = grid( %args, len => $len );
+
+  my $source = Math::Random::Brownian->new();
+
+  for ( my $x = 0 ; $x < $len ; $x++ ) {
+    my @noise = $source->Hosking(
+      LENGTH   => $len,
+      HURST    => .5,
+      VARIANCE => $args{amp},
+      NOISE    => $type,
+    );
+
+    for ( my $y = 0 ; $y < $len ; $y++ ) {
+      $grid->[$x]->[$y] = shift @noise;
+    }
+  }
+
+  return grow( $grid, %args );
+}
+
+sub jdist {
+  my $Zx       = shift;
+  my $Zy       = shift;
+  my $Cx       = shift;
+  my $Cy       = shift;
+  my $iter_max = shift;
+
+  my $x   = $Zx;
+  my $y   = $Zy;
+  my $xp  = 1;
+  my $yp  = 0;
+  my $nz  = 0;
+  my $nzp = 0;
+
+  for ( my $i = 0 ; $i < $iter_max ; $i++ ) {
+    $nz = 2 * ( $x * $xp - $y * $yp ) + 1;
+    $yp = 2 * ( $x * $yp + $y * $xp );
+    $xp = $nz;
+
+    $nz = $x * $x - $y * $y + $Cx;
+    $y  = 2 * $x * $y + $Cy;
+    $x  = $nz;
+
+    $nz  = $x * $x + $y * $y;
+    $nzp = $xp * $xp + $yp * $yp;
+    last if $nzp > 1e60;
+  }
+
+  my $a = sqrt($nz);
+
+  return 2 * $a * log($a) / sqrt($nzp);
+}
+
+sub djulia {
+  my %args = @_;
+
+  my $xstart = rand(.05) - .05;
+  my $ystart = rand(.05) - .05;
+
+  my $flen = .0125 + rand(.0125);
+
+  $args{maxiter} ||= 4096;
+
+  return julia(
+    %args,
+    ZxMin => $xstart,
+    ZyMin => $ystart,
+    ZxMax => $xstart + $flen,
+    ZyMax => $ystart + $flen,
+  );
+}
+
+sub julia {
+  my %args = @_;
+
+  print "Generating Julia...\n" if !$QUIET;
+
+  $args{len} ||= $defaultLen;
+  $args{freq} = $args{len} if !defined $args{freq};
+
+  %args = defaultArgs(%args);
+
+  my $len = $args{freq};
+
+  my $grid = grid( %args, len => $len );
+
+  my @c = (
+    [ -.74543, .11301 ],
+
+    # [ .285,  .01 ],
+    # [ -.8,   .156 ],
+  );
+
+  my $c = $c[ rand(@c) ];
+
+  my $Cx = $c->[0];
+  my $Cy = $c->[1];
+
+  # my $Cx = -0.74543;
+  # my $Cy = 0.11301;
+
+  my $iX = 0;
+  my $iY = 0;
+
+  my $ZxMin = $args{ZxMin};
+  my $ZxMax = $args{ZxMax};
+  my $ZyMin = $args{ZyMin};
+  my $ZyMax = $args{ZyMax};
+
+  $ZxMin = -2 if !defined $ZxMin;
+  $ZxMax = 2  if !defined $ZxMax;
+  $ZyMin = -2 if !defined $ZyMin;
+  $ZyMax = 2  if !defined $ZyMax;
+
+  # This is really low because this function is really slow
+  my $iters = $args{maxiter} || ( $maxColor * .75 );
+
+  # $len *= 2;
+
+  my $pixelWidth  = ( $ZxMax - $ZxMin ) / $len;
+  my $pixelHeight = ( $ZyMax - $ZyMin ) / $len;
+
+  my $Zx  = 0;
+  my $Zy  = 0;
+  my $Z0x = 0;
+  my $Z0y = 0;
+  my $Zx2 = 0;
+  my $Zy2 = 0;
+
+  my $escapeRadius = 400;
+  my $ER2          = $escapeRadius * $escapeRadius;
+
+  my $distanceMax = $pixelWidth / 15;
+
+  my $i;
+
+  for ( $iY = 0 ; $iY < $len ; $iY++ ) {
+    $Z0y = $ZyMax - $iY * $pixelHeight;
+    if ( abs($Z0y) < $pixelHeight / 2 ) {
+      $Z0y = 0;
+    }
+    for ( $iX = 0 ; $iX < $len ; $iX++ ) {
+      $Z0x = $ZxMin + $iX * $pixelWidth;
+      $Zx  = $Z0x;
+      $Zy  = $Z0y;
+      $Zx2 = $Zx * $Zx;
+      $Zy2 = $Zy * $Zy;
+
+      for ( $i = 1 ; $i <= $iters && ( $Zx2 + $Zy2 ) < $ER2 ; $i++ ) {
+        $Zy  = 2 * $Zx * $Zy + $Cy;
+        $Zx  = $Zx2 - $Zy2 + $Cx;
+        $Zx2 = $Zx * $Zx;
+        $Zy2 = $Zy * $Zy;
+      }
+
+      my $color;
+
+      if ( $i == $iters ) {
+        $color = 0;
+      } else {
+        my $distance = jdist( $Z0x, $Z0y, $Cx, $Cy, $iters );
+        if ( $distance < $distanceMax ) {
+          $color = $distanceMax - $distance;
+        } else {
+          $color = 0;
+        }
+      }
+
+      $grid->[$iX]->[$iY] += $color;
+    }
+  }
+
+  $grid = densemap( $grid, %args );
+
+  return grow( $grid, %args );
+}
+
+my @roots = ( [ 1, 0 ], [ -.5, sqrt(3) / 2 ], [ -.5, sqrt(3) / 2 * -1 ], );
+
+sub nclass {
+  my $x       = shift;
+  my $y       = shift;
+  my $maxiter = shift;
+
+  my $numRoots = scalar(@roots);
+
+  my $z = cplx( $x, $y );
+
+  my $prev = cplx( 0, 0 );
+
+  my $t_numerator     = cplx( 0, 0 );
+  my $t_denominator   = cplx( 0, 0 );
+  my $t_rootDist      = cplx( 0, 0 );
+  my $t_prevRrootDist = cplx( 0, 0 );
+
+  my $dist;
+
+  for ( my $i = 0 ; $i < $maxiter ; $i++ ) {
+    for ( my $r = 0 ; $r < $numRoots ; $r++ ) {
+      $t_rootDist->_set_cartesian( $roots[$r] );
+      $t_rootDist -= $z;
+
+      $dist = abs($t_rootDist);
+      last if $dist == 0;
+
+      if ( $dist <= .25 ) {
+        $t_prevRrootDist->_set_cartesian( $roots[$r] );
+        $t_rootDist -= $prev;
+
+        my $lnPrevRrootDist = log( abs($t_prevRrootDist) );
+
+        my $coded =
+          ( log(.25) - $lnPrevRrootDist ) / ( log($dist) - $lnPrevRrootDist );
+
+        $coded = $coded - int($coded);
+        $coded = $r + $coded;
+
+        # return $coded;
+        return $i / $maxiter + $coded;
+      }
+    }
+
+    if ( $z == $prev ) {
+      return -1;
+    }
+
+    $t_numerator = $z;
+    $t_numerator**= 3;
+    $t_numerator *= 2;
+    $t_numerator += 1;
+
+    $t_denominator = $z;
+    $t_denominator**= 2;
+    $t_denominator *= 3;
+
+    $prev = $z;
+
+    $z = $t_numerator / $t_denominator;
+  }
+
+  return -1;
+}
+
+sub newton {
+  my %args = @_;
+
+  print "Generating Newton...\n" if !$QUIET;
+
+  $args{len} ||= $defaultLen;
+  $args{freq} = $args{len} if !defined $args{freq};
+
+  %args = defaultArgs(%args);
+
+  my $len = $args{freq};
+
+  my $ZxMin = $args{ZxMin};
+  my $ZxMax = $args{ZxMax};
+  my $ZyMin = $args{ZyMin};
+  my $ZyMax = $args{ZyMax};
+
+  $ZxMin = -2 if !defined $ZxMin;
+  $ZxMax = 2  if !defined $ZxMax;
+  $ZyMin = -2 if !defined $ZyMin;
+  $ZyMax = 2  if !defined $ZyMax;
+
+  my $iters = $args{maxiter} || 10;
+
+  my $grid = grid( %args, len => $len );
+
+  my $pixelWidth  = ( $ZxMax - $ZxMin ) / $len;
+  my $pixelHeight = ( $ZyMax - $ZyMin ) / $len;
+
+  for ( my $x = 0 ; $x < $len ; $x++ ) {
+    my $zx = $ZxMin + $x * $pixelWidth;
+
+    for ( my $y = 0 ; $y < $len ; $y++ ) {
+      my $zy = $ZyMin + $y * $pixelHeight;
+
+      my $result = nclass( $zx, $zy, $iters );
+
+      $grid->[$x]->[$y] = $result * $maxColor / 2;
+    }
+
+    printRow( $grid->[$x] );
+  }
+
+  $grid = grow( $grid, %args );
+
+  return $grid;
+}
+
 sub _test {
   my %args = defaultArgs(@_);
 
@@ -2523,7 +2836,6 @@ sub _test {
   return $grid;
 }
 
-# our @chars = ( " ", ".", "-", "+", "=", "/", ">", "X", "#", "@" );
 our @chars = ( " ", ".", ".", ":", ":", "-", "-", "+", "+", "=", "=", "#" );
 
 sub printRow {
@@ -2594,7 +2906,7 @@ Math::Fractal::Noisemaker - Visual noise generator
 
 =head1 VERSION
 
-This document is for version 0.013 of Math::Fractal::Noisemaker.
+This document is for version 0.014 of Math::Fractal::Noisemaker.
 
 =head1 SYNOPSIS
 
@@ -2627,9 +2939,9 @@ A wrapper script, C<make-noise>, is included with this distribution.
   #
   # usage
   #
-  make-noise --help
+  make-noise -help
 
-  make-noise --help types
+  make-noise -help types
 
 Noise sets are just 2D arrays, which may be generated directly using
 named functions.
@@ -2707,11 +3019,18 @@ generated, C<make> accepts the following args in hash key form:
 
 =item * type => $noiseType
 
-The type of noise to generate, defaults to Perlin. Specify any type.
+The type of noise to generate, defaults to C<perlin>. Specify any
+type.
 
   make(type => 'gel');
 
 =item * sphere => $bool
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/post/sphere.jpeg" width="256" height="256" alt="sphere example" /></p>
+
+=end HTML
 
 Generate a pseudo-spheremap from the resulting noise.
 
@@ -2724,6 +3043,12 @@ See C<spheremap>.
   make(sphere => 1);
 
 =item * refract => $bool
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/post/refract.jpeg" width="256" height="256" alt="refract example" /></p>
+
+=end HTML
 
 "Refracted" pixel values. Can be used to enhance the fractal
 appearance of the resulting noise. Often makes it look dirty.
@@ -2741,19 +3066,43 @@ This feature is a work in progress.
 =item * clutdir => <0|1|2>
 
 0: Hypotenuse lookup (corner to corner, so it doesn't matter if the
-input table is oriented horizontally or vertically). This is the
-default. Best for seamless tiling.
+input table is oriented horizontally or vertically).
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/post/clutdir-0.jpeg" width="256" height="256" alt="clutdir 0 example" /></p>
+
+=end HTML
+
+This is the default. Best for seamless tiling.
+
+  make(clut => $filename, clutdir => 0);
 
 1: Vertical lookup, good for generating maps which have ice caps at
-the poles and tropical looking colors at the equator. Output will
-have color seams at the poles unless viewed on a spheroid. This
-lookup method produces output which resembles a reflection map, if
-a photograph is used for the C<clut>.
+the poles and tropical looking colors at the equator.
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/post/clutdir-1.jpeg" width="256" height="256" alt="clutdir 1 example" /></p>
+
+=end HTML
+
+Output will have color seams at the poles unless viewed on a spheroid.
+This lookup method produces output which resembles a reflection
+map, if a photograph is used for the C<clut>.
+
+  make(clut => $filename, clutdir => 1);
 
 2: Fractal lookup, uses the same methodology as C<refract>. Also
 good for seamless tiling.
 
-  make(clut => $filename, clutdir => 1);
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/post/clutdir-2.jpeg" width="256" height="256" alt="clutdir 2 example" /></p>
+
+=end HTML
+
+  make(clut => $filename, clutdir => 2);
 
 =item * limit => <0|1>
 
@@ -2778,9 +3127,21 @@ generated.
 
 =item * shadow => $float
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/post/shadow.jpeg" width="256" height="256" alt="shadow example" /></p>
+
+=end HTML
+
 Amount of self-shadowing to apply, between 0 and 1.
 
 =item * emboss => <0|1>
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/post/emboss.jpeg" width="256" height="256" alt="emboss example" /></p>
+
+=end HTML
 
 Render lightmap only
 
@@ -2788,84 +3149,298 @@ Render lightmap only
 
 =head1 NOISE TYPES
 
-=head2 SIMPLE NOISE
+=head2 SINGLE-RES NOISE
 
-Simple noise types may be specified as Perlin slice types (C<stype>)
+Single-res noise types may be specified as a multi-res slice types (C<stype>)
 
 =over 4
 
 =item * white(%args)
 
-Each non-smoothed pixel contains a pseudo-random value
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/white.jpeg" width="256" height="256" alt="white noise example" /></p>
+
+=end HTML
+
+Each non-smoothed pixel contains a pseudo-random value.
+
+See SINGLE-RES ARGS for allowed arguments.
 
 =item * wavelet(%args)
 
-Basis function for sharper Perlin slices
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/wavelet.jpeg" width="256" height="256" alt="wavelet noise example" /></p>
+
+=end HTML
+
+Basis function for sharper multi-res slices
+
+See SINGLE-RES ARGS for allowed arguments.
 
 =item * square(%args)
 
-Diamond-Square
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/square.jpeg" width="256" height="256" alt="square noise example" /></p>
+
+=end HTML
+
+Diamond-Square (mostly square)
+
+See SINGLE-RES ARGS for allowed arguments.
 
 =item * gel(%args)
 
-Self-displaced white noise; see GEL TYPES
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/gel.jpeg" width="256" height="256" alt="gel noise example" /></p>
+
+=end HTML
+
+Self-displaced white noise.
+
+See SINGLE-RES ARGS and GEL TYPES for allowed arguments.
 
 =item * sgel(%args)
 
-Self-displaced Diamond-Square noise; see GEL TYPES
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/sgel.jpeg" width="256" height="256" alt="square gel noise example" /></p>
+
+=end HTML
+
+Self-displaced Diamond-Square noise.
+
+See SINGLE-RES ARGS and GEL TYPES for allowed arguments.
 
 =item * dla(%args)
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/dla.jpeg" width="256" height="256" alt="diffusion-limited aggregation noise example" /></p>
+
+=end HTML
+
 Diffusion-limited aggregation, seeded from multiple random points.
+
+See SINGLE-RES ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect.
 
 =item * mandel(%args)
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/mandel.jpeg" width="256" height="256" alt="mandelbrot fractal example" /></p>
+
+=end HTML
+
 Fractal type - Mandelbrot. Included as a demo.
+
+See SINGLE-RES ARGS and FRACTAL ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect.
+
+Example C<maxiter> value: 256
 
 =item * dmandel(%args)
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/dmandel.jpeg" width="256" height="256" alt="deep mandelbrot fractal example" /></p>
+
+=end HTML
+
 Fractal type - Deep Mandelbrot. Picks a random "interesting" location
 in the set (some point with a value which neither hovers near 0 nor
-flies off into infinity), zooms in a random amount, and embellishes
-the palette.
+flies off into infinity), and zooms in a random amount (unless an
+explicit C<zoom> arg was provided).
+
+See SINGLE-RES ARGS and FRACTAL ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect.
+
+Example C<maxiter> value: 256
 
 =item * buddha(%args)
 
-Fractal type - "Buddhabrot" Mandelbrot variant. Work in progress.
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/buddha.jpeg" width="256" height="256" alt="buddhabrot fractal example" /></p>
+
+=end HTML
+
+Fractal type - "Buddhabrot" Mandelbrot variant. Shows the paths of
+slowly escaping points, density-mapped to escape time.
+
+See SINGLE-RES ARGS and FRACTAL ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect. This type does not
+C<zoom> well, due to the diminished sample of escaping points.
+
+Example C<maxiter> value: 4096
+
+=item * julia(%args)
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/julia.jpeg" width="256" height="256" alt="julia fractal example" /></p>
+
+=end HTML
+
+Fractal type - Julia. Included as demo.
+
+See SINGLE-RES ARGS and FRACTAL ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect.
+
+C<zoom> is not yet implemented for this type.
+
+Example C<maxiter> value: 200
+
+=item * djulia(%args)
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/djulia.jpeg" width="256" height="256" alt="deep julia fractal example" /></p>
+
+=end HTML
+
+Fractal type - Deep Julia. Zoomed in to a random location, which
+might not even be in the Julia set at all. Not currently very smart,
+but pretty, and pretty slow. C<maxiter> is very low by default.
+
+See SINGLE-RES ARGS and FRACTAL ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect.
+
+C<zoom> is not yet implemented for this type.
+
+Example C<maxiter> value: 200
+
+=item * newton(%args)
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/newton.jpeg" width="256" height="256" alt="newton fractal example" /></p>
+
+=end HTML
+
+Fractal type - Newton. Included as demo.
+
+Currently, this function is ridiculously slow.
+
+See SINGLE-RES ARGS and FRACTAL ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect.
+
+C<zoom> is not yet implemented for this type.
+
+Example C<maxiter> value: 10
 
 =item * fflame(%args)
 
-IFS type - "Fractal Flame". Work in progress. Neat.
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/fflame.jpeg" width="256" height="256" alt="ifs fractal flame example" /></p>
+
+=end HTML
+
+IFS type - "Fractal Flame". Work in progress. Slow but neat.
+
+See SINGLE-RES ARGS and FRACTAL ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect.
+
+Example C<maxiter> value: 6553600
 
 =item * fern(%args)
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/fern.jpeg" width="256" height="256" alt="fern example" /></p>
+
+=end HTML
 
 IFS type - Barnsley's fern. Included as a demo.
 
 =item * gasket(%args)
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/gasket.jpeg" width="256" height="256" alt="gasket example" /></p>
+
+=end HTML
+
 IFS type - Sierpinski's triangle/gasket. Included as a demo.
 
 =item * stars(%args)
 
-White noise generated with extreme gappiness and smoothed
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/stars.jpeg" width="256" height="256" alt="stars example" /></p>
+
+=end HTML
+
+White noise generated with extreme C<gap>, and smoothed
+
+See SINGLE-RES ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect.
 
 =item * spirals(%args)
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/spirals.jpeg" width="256" height="256" alt="spirals example" /></p>
+
+=end HTML
+
 Tiny logarithmic spirals
+
+See SINGLE-RES ARGS for allowed arguments.
+
+C<bias> and C<amp> currently have no effect.
 
 =item * voronoi(%args)
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/voronoi.jpeg" width="256" height="256" alt="voronoi example" /></p>
+
+=end HTML
+
 Ridged Voronoi cells.
 
+C<bias> and C<amp> currently have no effect.
+
 =item * moire(%args)
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/moire.jpeg" width="256" height="256" alt="moire example" /></p>
+
+=end HTML
 
 Interference pattern with blended image seams.
 
 Appearance of output is heavily influenced by the C<freq> arg.
 
+C<bias> and C<amp> currently have no effect.
+
 =item * textile(%args)
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/textile.jpeg" width="256" height="256" alt="textile example" /></p>
+
+=end HTML
+
 Moire noise with a randomized and large C<freq> arg.
+
+C<bias> and C<amp> currently have no effect.
 
 =item * infile(%args)
 
@@ -2878,6 +3453,12 @@ or "-in" arg.
 
 =item * intile(%args)
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/intile.jpeg" width="256" height="256" alt="intile example" /></p>
+
+=end HTML
+
 Calls C<infile>, and makes a seamless repeating tile from the image.
 
   my $grid = intile(
@@ -2886,15 +3467,49 @@ Calls C<infile>, and makes a seamless repeating tile from the image.
 
 =item * sparkle
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/sparkle.jpeg" width="256" height="256" alt="sparkle example" /></p>
+
+=end HTML
+
 Stylized starfield
+
+C<bias> and C<amp> currently have no effect.
+
+=item * brownian
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/brownian.jpeg" width="256" height="256" alt="brownian example" /></p>
+
+=end HTML
+
+Fractional Brownian noise (via L<Math::Random::Brownian>)
+
+C<bias> currently has no effect.
+
+=item * gaussian
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/gaussian.jpeg" width="256" height="256" alt="gaussian example" /></p>
+
+=end HTML
+
+Fractional Gaussian noise (via L<Math::Random::Brownian>)
+
+C<bias> currently has no effect.
 
 =back
 
-Simple noise types accept the following arguments in hash key form:
+=head3 SINGLE-RES ARGS
+
+Single-res noise types accept the following arguments in hash key form:
 
 =over 4
 
-=item * amp => $num
+=item * amp => <0..1>
 
 Amplitude, or max variance from the bias value.
 
@@ -2903,7 +3518,7 @@ amplitude (peak-to-peak amp/2).
 
   make(amp => 1);
 
-=item * freq => $num
+=item * freq => $int
 
 Frequency, or "density" of the noise produced.
 
@@ -2918,29 +3533,41 @@ Side length of the output images, which are always square.
 
   make(len => 512);
 
-=item * bias => $num
+=item * bias => <0..1>
 
 "Baseline" value for all pixels, .5 = 50%
 
   make(bias => .25);
 
-=item * smooth => $bool
+=item * smooth => <0|1>
 
 Enable/disable noise smoothing. 1 is default/recommended
 
   make(smooth => 0);
 
+=item * gap => <0..1>
+
+Larger values increase the chance for black pixels in white noise
+(which many noise types are derived from).
+
+  make(type => "white", gap => .995);
+
+=back
+
+=head3 FRACTAL ARGS
+
+=over 4
+
 =item * zoom => $num
 
-Used for fractal types only. Magnifaction factor.
+Magnifaction factor.
 
   make(type => 'mandel', zoom => 2);
 
 =item * maxiter => $int
 
-Used for fractal types only. Iteration limit for determining
-infinite boundaries, larger values take longer but are more
-accurate/look nicer.
+Iteration limit for determining infinite boundaries, larger values
+take longer but are more accurate/look nicer.
 
   make(type => 'mandel', maxiter => 2000);
 
@@ -2948,14 +3575,14 @@ accurate/look nicer.
 
 =cut
 
-=head2 PERLIN TYPES
+=head2 MULTI-RES TYPES
 
-Perlin noise combines the values from multiple 2D slices (octaves),
-which are generated using successively higher frequencies and lower
-amplitudes.
+Perlin (multi-res) noise combines the values from multiple 2D slices
+(octaves), which are generated using successively higher frequencies
+and lower amplitudes.
 
-The slice type used for generating Perlin noise may be controlled
-with the C<stype> argument. Any simple type may be specified.
+The slice type used for generating multi-res noise may be controlled
+with the C<stype> argument. Any single-res type may be specified.
 
 The default slice type is smoothed C<wavelet> noise.
 
@@ -2963,74 +3590,93 @@ The default slice type is smoothed C<wavelet> noise.
 
 =item * perlin(%args)
 
-Perlin
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/perlin-wavelet.jpeg" width="256" height="256" alt="perlin example" /></p>
+
+=end HTML
+
+Multi-resolution noise.
+
+See MULTI-RES ARGS for allowed args.
 
   make(type => 'perlin', stype => '...');
 
 =item * ridged(%args)
 
-Ridged multifractal - provide C<zshift> arg to specify a post-processing bias.
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/ridged-wavelet.jpeg" width="256" height="256" alt="ridged example" /></p>
+
+=end HTML
+
+Ridged multifractal.
+
+See MULTI-RES ARGS for allowed args.
+
+Provide C<zshift> arg to specify a post-processing bias.
 
   make(type => 'ridged', stype => '...', zshift => .5 );
 
 =item * block(%args)
 
-Unsmoothed Perlin
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/block-wavelet.jpeg" width="256" height="256" alt="block example" /></p>
+
+=end HTML
+
+Unsmoothed multi-resolution.
+
+See MULTI-RES ARGS for allowed args.
 
   make(type => 'block', stype => ...);
 
 =item * pgel(%args)
 
-Self-displaced Perlin noise; see GEL TYPES
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/pgel-wavelet.jpeg" width="256" height="256" alt="perlin gel example" /></p>
+
+=end HTML
+
+Self-displaced multi-res noise.
+
+See MULTI-RES ARGS and GEL TYPES for allowed args.
 
   make(type => 'pgel', stype => ...);
 
 =item * fur(%args)
 
-Fur-lin noise; traced paths of worms with Perlin input.
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/fur-wavelet.jpeg" width="256" height="256" alt="fur example" /></p>
+
+=end HTML
+
+Fur-lin noise; traced paths of worms with multi-res input.
+
+See MULTI-RES ARGS for allowed args.
 
 =item * tesla(%args)
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/tesla-wavelet.jpeg" width="256" height="256" alt="tesla example" /></p>
+
+=end HTML
+
 Long, fiberous worm paths with random skew.
 
-=item * delta(%args)
-
-Difference noise; output contains absolute values of subtracting
-two noise sets.
-
-  make( type => "delta" );
-
-Use C<ltype> to specify any simple or perlin layer type.
-
-  make(
-    type => "delta",
-    ltype => "gel"
-  );
-
-=item * chiral(%args)
-
-Twin noise; output contains the lightest values of two noise sets.
-
-  make( type => "chiral" );
-
-Use C<ltype> to specify any simple or perlin layer type.
-
-  make(
-    type => "chiral",
-    ltype => "tesla"
-  );
-
-=item * stereo(%args)
-
-Stereoscopic depth map.
-
-Use C<ltype> to specify any simple or perlin layer type.
+See MULTI-RES ARGS for allowed args.
 
 =back
 
-In addition to any of the args which may be used for simple noise
-types, Perlin noise types accept the following arguments in hash
-key form:
+=head3 MULTI-RES ARGS
+
+In addition to any of the args which may be used for single-res
+noise types, Perlin noise types accept the following arguments in
+hash key form:
 
 =over 4
 
@@ -3047,25 +3693,96 @@ Higher generally looks nicer.
 
 =item * stype => $simpleType
 
-Perlin slice type, defaults to C<wavelet>. Any simple type may be
+Perlin slice type, defaults to C<wavelet>. Any single-res type may be
 specified.
 
   my $grid = make(stype => 'gel');
 
 =back
 
+=head2 DUAL NOISE
+
+Dual noise contains two noise sets of the same type.
+
+=over 4
+
+=item * delta(%args)
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/delta-perlin-wavelet.jpeg" width="256" height="256" alt="delta example" /></p>
+
+=end HTML
+
+Difference noise; output contains absolute values of subtracting
+two noise sets.
+
+  make( type => "delta" );
+
+Use C<ltype> to specify any single-res or perlin layer type. If
+specifying a perlin layer type, you may also specify C<stype> to
+override the slice type.
+
+  make(
+    type => "delta",
+    ltype => "gel"
+  );
+
+=item * chiral(%args)
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/chiral-perlin-wavelet.jpeg" width="256" height="256" alt="chiral example" /></p>
+
+=end HTML
+
+Twin noise; output contains the lightest values of two noise sets.
+
+  make( type => "chiral" );
+
+Use C<ltype> to specify any single-res or perlin layer type. If
+specifying a perlin layer type, you may also specify C<stype> to
+override the slice type.
+
+  make(
+    type => "chiral",
+    ltype => "tesla"
+  );
+
+=item * stereo(%args)
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/stereo-perlin-wavelet.jpeg" width="256" height="256" alt="stereo example" /></p>
+
+=end HTML
+
+Stereoscopic depth map.
+
+Use C<ltype> to specify any single-res or perlin layer type. If
+specifying a perlin layer type, you may also specify C<stype> to
+override the slice type.
+
+=back
+
 =head2 COMPLEX NOISE
+
+Complex noise is a homebrew noise recipe inspired by (but not using)
+I<libnoise>.
 
 =over 4
 
 =item * complex
 
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/complex-perlin-perlin-wavelet.jpeg" width="256" height="256" alt="complex example" /></p>
+
+=end HTML
+
 Complex layered noise
 
   make(type => "complex");
-
-Complex noise is a homebrew noise recipe inspired by (but not using)
-I<libnoise>.
 
 This function generates a noise base and multiple noise layers.
 Each pixel in the resulting noise is blended towards the value in
@@ -3075,20 +3792,20 @@ superimposed over the combined layers.
 
   my $grid = complex();
 
-Presets for hundreds of noise variants (many of them quite interesting
-visually) may be generated through this function, by combining
-different base types, layer types, and slice types.
+Hundreds of noise variants (many of them quite interesting visually)
+may be generated through this function, by combining different base
+types, layer types, and slice types.
 
   my $grid = complex(
     lbase => <any noise type but complex>,
     ltype => <any noise type but complex>,
-    stype => <any simple type>,
+    stype => <any single-res type>,
     # ...
   );
 
 =back
 
-In addition to all simple and Perlin args, complex noise accepts
+In addition to all single-res and Perlin args, complex noise accepts
 the following args in hash key form:
 
 =over 4
@@ -3125,16 +3842,16 @@ except for C<complex> may be used.
 
 =head2 GEL TYPES
 
-The simple and Perlin "gel" types (C<gel>, C<sgel>, C<pgel>)
+The single-res and Perlin "gel" types (C<gel>, C<sgel>, C<pgel>)
 accept the following additional arguments:
 
 =over 4
 
-=item * offset => $float
+=item * displace => $float
 
 Amount of self-displacement to apply to gel noise
 
-  make(type => 'gel', offset => .125);
+  make(type => 'gel', displace => .125);
 
 =back
 
@@ -3264,6 +3981,13 @@ sources.
 
   - http://flam3.com/flame.pdf
     Fractal Flame
+
+  - http://en.wikipedia.org/wiki/File:Demj.jpg
+    C<julia> and C<jdist> functions ported from "Julia set using
+    DEM/J" by Adam Majewski
+
+  - http://vlab.infotech.monash.edu.au/simulations/fractals/
+    C<newton> function ported from "Fractals on the Complex Plane"
 
 ... and a host of others.
 
