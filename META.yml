@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Math-Fractal-Noisemaker
-version:             0.014
+version:             0.015
 abstract:            Visual noise generator
 license:             open_source
 author:              

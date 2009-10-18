@@ -1,6 +1,6 @@
 package Math::Fractal::Noisemaker;
 
-our $VERSION = '0.014';
+our $VERSION = '0.015';
 
 use strict;
 use warnings;
@@ -19,7 +19,7 @@ our @SIMPLE_TYPES = qw|
   |;
 
 our @PERLIN_TYPES = qw|
-  perlin ridged block pgel fur tesla
+  perlin ridged block pgel fur tesla lumber wormhole flux
   |;
 
 our @NOISE_TYPES = (
@@ -40,6 +40,8 @@ our %EXPORT_TAGS = (
   'all' => \@EXPORT_OK,
 );
 
+our $defaultAmp       = .5;
+our $defaultBias      = .5;
 our $defaultLen       = 256;
 our $defaultType      = 'perlin';
 our $defaultSliceType = 'wavelet';
@@ -94,6 +96,9 @@ sub showTypes {
   print "  ! pgel            ## self-displaced multi-res\n";
   print "  ! fur             ## based on \"Perlin Worms\"\n";
   print "  ! tesla           ## worms/fur variant\n";
+  print "  ! lumber          ## vaguely woodlike\n";
+  print "  ! wormhole        ## field flow\n";
+  print "  ! flux            ## extruded contours\n";
   print "\n";
   print " !! delta           ## difference noise\n";
   print " !! chiral          ## joined noise\n";
@@ -127,6 +132,7 @@ sub usage {
   print "  [-len <int>] \\              ## side length (eg 256)\n";
   print "  [-octaves <int>] \\          ## octave count (eg 4)\n";
   print "  [-bias <num>] \\             ## value bias (0..1)\n";
+  print "  [-persist <num>] \\          ## multi-res persistence (eg .5)\n";
   print "  [-gap <num>] \\              ## gappiness (0..1)\n";
   print "  [-feather <num>] \\          ## feather amt (0..255)\n";
   print "  [-layers <int>] \\           ## complex layers (eg 3)\n";
@@ -183,6 +189,7 @@ sub make {
     elsif ( $arg =~ /len/ )       { $args{len}      = shift; }
     elsif ( $arg =~ /octaves/ )   { $args{octaves}  = shift; }
     elsif ( $arg =~ /bias/ )      { $args{bias}     = shift; }
+    elsif ( $arg =~ /persist/ )   { $args{persist}  = shift; }
     elsif ( $arg =~ /gap/ )       { $args{gap}      = shift; }
     elsif ( $arg =~ /feather/ )   { $args{feather}  = shift; }
     elsif ( $arg =~ /layers/ )    { $args{layers}   = shift; }
@@ -235,8 +242,8 @@ sub make {
   {
     $args{freq}     ||= 4;
     $args{displace} ||= .5;
-  } else {
-    $args{octaves} ||= 8;
+  # } else {
+    # $args{octaves} ||= 8;
   }
 
   my $format = $args{format} || "bmp";
@@ -334,17 +341,19 @@ sub make {
 sub defaultArgs {
   my %args = @_;
 
-  $args{bias}   = .5 if !defined $args{bias};
+  $args{bias}   = $defaultBias if !defined $args{bias};
   $args{smooth} = 1  if !defined $args{smooth};
-  $args{auto}   = 1  if !defined( $args{auto} ) && $args{type} ne 'fern';
 
   $args{gap}     ||= 0;
   $args{type}    ||= $defaultType;
   $args{freq}    ||= 8;
   $args{len}     ||= $defaultLen;
   $args{octaves} ||= 4;
+  $args{persist} ||= .5;
 
-  $args{amp} = .5 if !defined $args{amp};
+  $args{auto}   = 1  if !defined( $args{auto} ) && $args{type} ne 'fern';
+
+  $args{amp} = $defaultAmp if !defined $args{amp};
 
   return %args;
 }
@@ -596,12 +605,12 @@ sub white {
 
   %args = defaultArgs(%args);
 
-  my $grid = grid(%args);
-
   my $freq = $args{freq};
   my $gap  = $args{gap};
 
-  $args{amp} = .5 if !defined $args{amp};
+  my $grid = grid(%args, len => $freq);
+
+  $args{amp} = $defaultAmp if !defined $args{amp};
 
   my $ampVal  = $args{amp} * $maxColor;
   my $biasVal = $args{bias} * $maxColor;
@@ -644,7 +653,7 @@ sub stars {
   print "Generating stars...\n" if !$QUIET;
 
   $args{bias} = 0;
-  $args{amp} ||= .5;
+  $args{amp} ||= $defaultAmp;
   $args{gap} ||= .995;
 
   my $grid = white( %args, stars => 1 );
@@ -713,9 +722,9 @@ sub square {
   my $bias   = $args{bias};
   my $length = $args{len};
 
-  $amp = .5 if !defined $amp;
+  $amp = $defaultAmp if !defined $amp;
 
-  my $grid = wavelet( %args, len => $freq * 2 );
+  my $grid = white( %args, len => $freq * 2 );
 
   my $haveLength = $freq * 2;
   my $baseOffset = $maxColor * $amp;
@@ -767,10 +776,12 @@ sub square {
 
     $haveLength *= 2;
 
-    for ( my $x = 0 ; $x < $haveLength ; $x++ ) {
-      for ( my $y = 0 ; $y < $haveLength ; $y++ ) {
-        next if defined $grown->[$x]->[$y];
+    $baseOffset /= 2;
 
+    for ( my $x = 0 ; $x < $haveLength ; $x++ ) {
+      my $base = ( $x + 1 ) % 2;
+
+      for ( my $y = $base ; $y < $haveLength ; $y += 2 ) {
         my $sides =
           ( noise( $grown, $x - 1, $y ) +
             noise( $grown, $x + 1, $y ) +
@@ -783,13 +794,7 @@ sub square {
       }
     }
 
-    $baseOffset /= 2;
-
-    $grid = $grown;
-  }
-
-  if ( $args{smooth} ) {
-    $grid = smooth( $grid, %args );
+    $grid = $args{smooth} ? smooth($grown) : $grown;
   }
 
   return $grid;
@@ -810,10 +815,11 @@ sub perlin {
 
   print "Generating Perlin noise...\n" if !$QUIET;
 
-  $args{amp} = .5 if !defined $args{amp};
-  $args{amp} *= $args{octaves};
+  $args{amp} = $defaultAmp if !defined $args{amp};
 
   %args = defaultArgs(%args);
+
+  $args{amp} *= $args{octaves};
 
   my $length  = $args{len};
   my $amp     = $args{amp};
@@ -854,7 +860,7 @@ sub perlin {
       len  => $length,
       );
 
-    $amp  *= .5;
+    $amp  *= $args{persist};
     $freq *= 2;
   }
 
@@ -954,10 +960,8 @@ sub refract {
     for ( my $y = 0 ; $y < $haveLength ; $y++ ) {
       my $color = $grid->[$x]->[$y] || 0;
       my $srcY = ( $color / $maxColor ) * $haveLength;
-      $srcY -= $haveLength if $srcY > $haveLength;
-      $srcY += $haveLength if $srcY < 0;
 
-      $out->[$x]->[$y] = $grid->[0]->[$srcY];
+      $out->[$x]->[$y] = $grid->[0]->[$srcY % $haveLength];
     }
   }
 
@@ -972,8 +976,9 @@ sub lsmooth {
 
   my $smooth = [];
 
-  my $dirs  = 6;
-  my $angle = rand(360);
+  my $dirs  = $args{dirs} || 6;
+  my $angle = $args{angle} || rand(360);
+  my $rad   = $args{rad} || 6;
 
   my $dirAngle = 360 / $dirs;
   my $angle360 = 360 + $angle;
@@ -985,16 +990,12 @@ sub lsmooth {
       $smooth->[$x]->[$y] += $grid->[$x]->[$y] / $dirs;
 
       for ( my $a = $angle ; $a < $angle360 ; $a += $dirAngle ) {
-        my $rad = 6;
-
         for ( my $d = 1 ; $d <= $rad ; $d++ ) {    # distance
           my ( $tx, $ty ) = translate( $x, $y, $a, $d );
           $tx = $tx % $len;
           $ty = $ty % $len;
 
-          # print "$x, $y: $tx, $ty\n";
-
-          $smooth->[$x]->[$y] += $grid->[$tx]->[$ty] * ( 1 - ( $d / $rad ) );
+          $smooth->[$x]->[$y] += $grid->[$tx]->[$ty] * ( 1 - ( $d / $rad ) ) / $rad;
         }
       }
     }
@@ -1073,7 +1074,7 @@ sub complex {
 
       $bias += $biasOffset;
       $biasOffset *= .5;
-      $amp        *= .5;
+      $amp        *= $args{persist};
     }
   };
 
@@ -1172,7 +1173,7 @@ sub noise {
   my $x     = shift;
   my $y     = shift;
 
-  my $length = @{$noise};
+  my $length = shift || @{$noise};
 
   $x = $x % $length;
   $y = $y % $length;
@@ -1206,7 +1207,7 @@ sub wavelet {
 
   print "Generating wavelet noise...\n" if !$QUIET;
 
-  $args{amp} = .5 if !defined $args{amp};
+  $args{amp} = $defaultAmp if !defined $args{amp};
   $args{len} ||= $defaultLen;
   $args{freq} = $args{len} if !defined $args{freq};
 
@@ -1288,40 +1289,52 @@ sub gasket {
 #
 # Set up IFS flame functions once
 #
+sub _fflinear { return @_ }
+
+sub _ffsinusoidal {
+  my ( $x, $y ) = @_;
+  return sin($x) * 3, sin($y) * 3;
+}
+
+sub _ffsphere {
+  my ( $x, $y ) = @_;
+  my $n = 1 / ( ( $x * $x ) + ( $y + $y ) );
+  return $x * $n, $y * $n;
+}
+
+sub _ffswirl {
+  my ( $x, $y ) = @_;
+  my $rsqrd = ( ( $x * $x ) + ( $y + $y ) );
+  return (
+    ( $x * sin($rsqrd) ) - ( $y * cos($rsqrd) ),
+    ( $x * cos($rsqrd) ) + ( $y * sin($rsqrd) )
+  );
+}
+
+sub _ffhorseshoe {
+  my ( $x, $y ) = @_;
+  my $r = sqrt( ( $x * $x ) + ( $y * $y ) );
+  my $rf = 1 / ( $r * $r );
+  return ( $rf * ( $x - $y ) * ( $x + $y ), $rf * 2 * $x * $y );
+}
+
+sub _ffpopcorn {
+  my ( $x, $y, $c, $f ) = @_;
+  return (
+    $x + ( $c * sin( tan( 3 * $y ) ) ),
+    $y + ( $f * sin( tan( 3 * $x ) ) ),
+  );
+}
+
 my @flameFns;
 
 do {
-  push @flameFns, sub { return @_ };    # linear
-  push @flameFns, sub {                 # sinu
-    my ( $x, $y ) = @_;
-    return sin($x) * 3, sin($y) * 3;
-  };
-  push @flameFns, sub {                 # sphere
-    my ( $x, $y ) = @_;
-    my $n = 1 / ( ( $x * $x ) + ( $y + $y ) );
-    return $x * $n, $y * $n;
-  };
-  push @flameFns, sub {                 # swirl
-    my ( $x, $y ) = @_;
-    my $rsqrd = ( ( $x * $x ) + ( $y + $y ) );
-    return (
-      ( $x * sin($rsqrd) ) - ( $y * cos($rsqrd) ),
-      ( $x * cos($rsqrd) ) + ( $y * sin($rsqrd) )
-    );
-  };
-  push @flameFns, sub {                 # horseshoe
-    my ( $x, $y ) = @_;
-    my $r = sqrt( ( $x * $x ) + ( $y * $y ) );
-    my $rf = 1 / ( $r * $r );
-    return ( $rf * ( $x - $y ) * ( $x + $y ), $rf * 2 * $x * $y );
-  };
-  push @flameFns, sub {                 # popcorn
-    my ( $x, $y, $c, $f ) = @_;
-    return (
-      $x + ( $c * sin( tan( 3 * $y ) ) ),
-      $y + ( $f * sin( tan( 3 * $x ) ) ),
-    );
-  };
+  push @flameFns, \&_fflinear;
+  push @flameFns, \&_ffsinusoidal;
+  push @flameFns, \&_ffsphere;
+  push @flameFns, \&_ffswirl;
+  push @flameFns, \&_ffhorseshoe;
+  push @flameFns, \&_ffpopcorn;
 };
 
 sub fflame {
@@ -1411,7 +1424,7 @@ sub densemap {
 
   my $i = 0;
   for ( sort { $a <=> $b } @colors ) {
-    $colors->{$_} = ( sqrt( $i / @colors ) * $maxColor );
+    $colors->{$_} = ( $i / @colors ) * $maxColor;
 
     $i++;
   }
@@ -1934,7 +1947,7 @@ sub spirals {
   my $radius = $half;
   my $rand   = sub { ( rand() >= .5 ) ? 1 : -1 };
 
-  $args{amp} = .5 if !defined $args{amp};
+  $args{amp} = $defaultAmp if !defined $args{amp};
 
   my $bias = $args{bias} * $maxColor;
   my $amp  = $args{amp} * $maxColor;
@@ -1999,8 +2012,8 @@ sub spirals {
 sub dla {
   my %args = @_;
 
-  $args{bias} ||= .5;
-  $args{amp}  ||= .5;
+  $args{bias} ||= $defaultBias;
+  $args{amp}  ||= $defaultAmp;
   $args{len}  ||= $defaultLen;
   $args{freq} = $args{len} if !defined $args{freq};
 
@@ -2412,7 +2425,7 @@ sub sparkle {
   my $clouds = sgel( %args, freq => 8, bias => 0, amp => .025, stars => 1 );
 
   my $shadow = emboss( $clouds, %args );
-  my $dust = sgel( %args, freq => 16, amp => .5, stars => 1 );
+  my $dust = sgel( %args, freq => 16, amp => $defaultAmp, stars => 1 );
   $dust = densemap($dust);
 
   my $out = grid(%args);
@@ -2820,6 +2833,157 @@ sub newton {
   return $grid;
 }
 
+sub lumber {
+  my %args = defaultArgs(@_);
+
+  my $len = $args{len};
+
+  my $perlin = perlin(%args, octaves => 4, freq => 2, amp => 8);
+
+  my $grid = grid(%args);
+
+  for ( my $x = 0 ; $x < $len; $x++ ) {
+    for ( my $y = 0 ; $y < $len; $y++ ) {
+      my $gray = noise($perlin, $x, 0)/4;
+
+      $grid->[$y]->[$x] =
+        (noise($perlin, $gray, $y) + ($perlin->[$x]->[$y])) % $maxColor;
+    }
+  }
+
+  return glow($grid);
+}
+
+#
+# I heartily endorse this event or product
+#
+sub wormhole {
+  my %args = @_;
+
+  $args{octaves} = 3 if !$args{octaves};
+  $args{freq} = 2 if !$args{freq};
+  $args{amp} = 8 if !$args{amp};
+
+  %args = defaultArgs(%args);
+
+  my $len  = $args{len} * 2;
+  my $dist = sqrt($len);
+
+  my $grid = grid(%args, bias => 0, len => $len);
+  my $perlin = perlin(%args, len => $len);
+
+  for ( my $x = 0; $x < $len; $x++ ) {
+    for ( my $y = 0; $y < $len; $y++ ) {
+      my $amp = noise($perlin,$x,$y,$len) / $maxColor;
+
+      do {
+        my ( $thisX, $thisY ) = translate( $x, $y,
+          $amp * 360,
+          $amp * $dist,
+        );
+
+        $grid->[$thisX % $len]->[$thisY % $len] = abs($amp);
+      };
+    }
+  }
+
+  $grid = shrink($grid,%args);
+
+  $grid = glow($grid,%args);
+
+  $grid = densemap($grid,%args);
+
+  return $grid;
+}
+
+sub flux {
+  my %args = @_;
+
+  $args{len} = $defaultLen if !$args{len};
+  $args{octaves} = 3 if !$args{octaves};
+  $args{freq} = 2 if !$args{freq};
+
+  my $len  = $args{len} * 2;
+
+  $args{amp} = sqrt($len)*2 if !$args{amp};
+  $args{bias} = 0 if !$args{bias};
+
+  my $dist = sqrt($len);
+
+  %args = defaultArgs(%args);
+
+  my $grid = grid(%args,bias=>0, len => $len);
+
+  my $perlin = perlin(%args, freq => 2, len => $len);
+
+  for ( my $x = 0; $x < $len; $x++ ) {
+    for ( my $y = 0; $y < $len; $y++ ) {
+      my $amp = noise($perlin,$x,$y,$len) / $maxColor;
+
+      # $grid->[$x]->[$y] = abs($amp);
+
+      do {
+        my $xAngle = xAngle( $perlin, $x, $y );
+        my $yAngle = yAngle( $perlin, $x, $y );
+
+        my $angle = sqrt(($xAngle**2) + ($yAngle**2));
+
+        my ( $thisX, $thisY ) = translate( $x, $y,
+          $angle,
+          ( $amp / $dist ) * $dist,
+        );
+
+        $thisX %= $len;
+        $thisY %= $len;
+
+        $grid->[$thisX]->[$thisY] = abs($amp);
+      };
+    }
+  }
+
+  $grid = shrink($grid,%args);
+
+  $grid = glow($grid,%args);
+
+  $grid = densemap($grid,%args);
+
+  for ( my $x = 0; $x < $len/2; $x++ ) {
+    for ( my $y = 0; $y < $len/2; $y++ ) {
+      $grid->[$x]->[$y] = $maxColor - $grid->[$x]->[$y];
+    }
+  }
+
+  return $grid;
+}
+
+sub xAngle {
+  my $perlin = shift;
+  my $x = shift;
+  my $y = shift;
+
+  my $left = noise($perlin,$x-1,$y);
+  my $this = noise($perlin,$x,$y);
+  my $right = noise($perlin,$x+1,$y);
+
+  my $delta = ( $left - $right ) / $maxColor;
+
+  return ( $delta * 360 );
+}
+
+sub yAngle {
+  my $perlin = shift;
+  my $x = shift;
+  my $y = shift;
+
+  my $up = noise($perlin,$x,$y-1);
+  my $this = noise($perlin,$x,$y);
+  my $down = noise($perlin,$x,$y+1);
+
+  my $delta = ( $up - $down ) / $maxColor;
+
+  return ( $delta * 360 );
+}
+
 sub _test {
   my %args = defaultArgs(@_);
 
@@ -2906,7 +3070,7 @@ Math::Fractal::Noisemaker - Visual noise generator
 
 =head1 VERSION
 
-This document is for version 0.014 of Math::Fractal::Noisemaker.
+This document is for version 0.015 of Math::Fractal::Noisemaker.
 
 =head1 SYNOPSIS
 
@@ -2970,13 +3134,12 @@ L<Imager> can take care of further post-processing.
 =head1 DESCRIPTION
 
 Math::Fractal::Noisemaker provides a simple functional interface
-for generating 2D tiles from various flavors of fractal (and
-non-fractal) inputs.
+for generating 2D fractal (or non-fractal) noise.
 
-As long as the specified side length is a power of the noise's
-frequency, this module will produce seamless tiles (with the exception
-of a few noise types).  For example, a base frequency of 4 would
-work fine for an image with a side length of 256 (256x256).
+If the specified side length is a power of the noise's frequency,
+this module will produce seamless tiles (with the exception of a
+few noise types). For example, a base frequency of 4 works for an
+image with a side length of 256 (256x256).
 
 =head1 FUNCTION
 
@@ -3155,7 +3318,7 @@ Single-res noise types may be specified as a multi-res slice types (C<stype>)
 
 =over 4
 
-=item * white(%args)
+=item * white
 
 =begin HTML
 
@@ -3167,7 +3330,7 @@ Each non-smoothed pixel contains a pseudo-random value.
 
 See SINGLE-RES ARGS for allowed arguments.
 
-=item * wavelet(%args)
+=item * wavelet
 
 =begin HTML
 
@@ -3179,7 +3342,7 @@ Basis function for sharper multi-res slices
 
 See SINGLE-RES ARGS for allowed arguments.
 
-=item * square(%args)
+=item * square
 
 =begin HTML
 
@@ -3191,7 +3354,7 @@ Diamond-Square (mostly square)
 
 See SINGLE-RES ARGS for allowed arguments.
 
-=item * gel(%args)
+=item * gel
 
 =begin HTML
 
@@ -3203,7 +3366,7 @@ Self-displaced white noise.
 
 See SINGLE-RES ARGS and GEL TYPES for allowed arguments.
 
-=item * sgel(%args)
+=item * sgel
 
 =begin HTML
 
@@ -3215,7 +3378,7 @@ Self-displaced Diamond-Square noise.
 
 See SINGLE-RES ARGS and GEL TYPES for allowed arguments.
 
-=item * dla(%args)
+=item * dla
 
 =begin HTML
 
@@ -3229,7 +3392,7 @@ See SINGLE-RES ARGS for allowed arguments.
 
 C<bias> and C<amp> currently have no effect.
 
-=item * mandel(%args)
+=item * mandel
 
 =begin HTML
 
@@ -3245,7 +3408,7 @@ C<bias> and C<amp> currently have no effect.
 
 Example C<maxiter> value: 256
 
-=item * dmandel(%args)
+=item * dmandel
 
 =begin HTML
 
@@ -3264,7 +3427,7 @@ C<bias> and C<amp> currently have no effect.
 
 Example C<maxiter> value: 256
 
-=item * buddha(%args)
+=item * buddha
 
 =begin HTML
 
@@ -3282,7 +3445,7 @@ C<zoom> well, due to the diminished sample of escaping points.
 
 Example C<maxiter> value: 4096
 
-=item * julia(%args)
+=item * julia
 
 =begin HTML
 
@@ -3300,7 +3463,7 @@ C<zoom> is not yet implemented for this type.
 
 Example C<maxiter> value: 200
 
-=item * djulia(%args)
+=item * djulia
 
 =begin HTML
 
@@ -3320,7 +3483,7 @@ C<zoom> is not yet implemented for this type.
 
 Example C<maxiter> value: 200
 
-=item * newton(%args)
+=item * newton
 
 =begin HTML
 
@@ -3340,7 +3503,7 @@ C<zoom> is not yet implemented for this type.
 
 Example C<maxiter> value: 10
 
-=item * fflame(%args)
+=item * fflame
 
 =begin HTML
 
@@ -3356,7 +3519,7 @@ C<bias> and C<amp> currently have no effect.
 
 Example C<maxiter> value: 6553600
 
-=item * fern(%args)
+=item * fern
 
 =begin HTML
 
@@ -3366,7 +3529,7 @@ Example C<maxiter> value: 6553600
 
 IFS type - Barnsley's fern. Included as a demo.
 
-=item * gasket(%args)
+=item * gasket
 
 =begin HTML
 
@@ -3376,7 +3539,7 @@ IFS type - Barnsley's fern. Included as a demo.
 
 IFS type - Sierpinski's triangle/gasket. Included as a demo.
 
-=item * stars(%args)
+=item * stars
 
 =begin HTML
 
@@ -3390,7 +3553,7 @@ See SINGLE-RES ARGS for allowed arguments.
 
 C<bias> and C<amp> currently have no effect.
 
-=item * spirals(%args)
+=item * spirals
 
 =begin HTML
 
@@ -3404,7 +3567,7 @@ See SINGLE-RES ARGS for allowed arguments.
 
 C<bias> and C<amp> currently have no effect.
 
-=item * voronoi(%args)
+=item * voronoi
 
 =begin HTML
 
@@ -3416,7 +3579,7 @@ Ridged Voronoi cells.
 
 C<bias> and C<amp> currently have no effect.
 
-=item * moire(%args)
+=item * moire
 
 =begin HTML
 
@@ -3430,7 +3593,7 @@ Appearance of output is heavily influenced by the C<freq> arg.
 
 C<bias> and C<amp> currently have no effect.
 
-=item * textile(%args)
+=item * textile
 
 =begin HTML
 
@@ -3442,7 +3605,7 @@ Moire noise with a randomized and large C<freq> arg.
 
 C<bias> and C<amp> currently have no effect.
 
-=item * infile(%args)
+=item * infile
 
 Import the brightness values from the file specified by the "in"
 or "-in" arg.
@@ -3451,7 +3614,7 @@ or "-in" arg.
     in => "dirt.bmp"
   );
 
-=item * intile(%args)
+=item * intile
 
 =begin HTML
 
@@ -3588,7 +3751,7 @@ The default slice type is smoothed C<wavelet> noise.
 
 =over 4
 
-=item * perlin(%args)
+=item * perlin
 
 =begin HTML
 
@@ -3602,7 +3765,7 @@ See MULTI-RES ARGS for allowed args.
 
   make(type => 'perlin', stype => '...');
 
-=item * ridged(%args)
+=item * ridged
 
 =begin HTML
 
@@ -3618,7 +3781,7 @@ Provide C<zshift> arg to specify a post-processing bias.
 
   make(type => 'ridged', stype => '...', zshift => .5 );
 
-=item * block(%args)
+=item * block
 
 =begin HTML
 
@@ -3632,7 +3795,7 @@ See MULTI-RES ARGS for allowed args.
 
   make(type => 'block', stype => ...);
 
-=item * pgel(%args)
+=item * pgel
 
 =begin HTML
 
@@ -3646,7 +3809,7 @@ See MULTI-RES ARGS and GEL TYPES for allowed args.
 
   make(type => 'pgel', stype => ...);
 
-=item * fur(%args)
+=item * fur
 
 =begin HTML
 
@@ -3658,7 +3821,7 @@ Fur-lin noise; traced paths of worms with multi-res input.
 
 See MULTI-RES ARGS for allowed args.
 
-=item * tesla(%args)
+=item * tesla
 
 =begin HTML
 
@@ -3667,6 +3830,48 @@ See MULTI-RES ARGS for allowed args.
 =end HTML
 
 Long, fiberous worm paths with random skew.
+
+See MULTI-RES ARGS for allowed args.
+
+=item * lumber
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/lumber-wavelet.jpeg" width="256" height="256" alt="lumber example" /></p>
+
+=end HTML
+
+Persistent noise with heavy banding.
+
+Looks vaguely wood-like with the right clut.
+
+See MULTI-RES ARGS for allowed args.
+
+=item * wormhole
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/wormhole-wavelet.jpeg" width="256" height="256" alt="wormhole example" /></p>
+
+=end HTML
+
+Noise values displaced according to field flow rules, and plotted.
+
+C<amp> controls displacement amount (eg 8).
+
+See MULTI-RES ARGS for allowed args.
+
+=item * flux
+
+=begin HTML
+
+<p><img src="http://github.com.nyud.net/aayars/noisemaker-ex/raw/master/ex/img/flux-wavelet.jpeg" width="256" height="256" alt="flux example" /></p>
+
+=end HTML
+
+Noise values extruded in three dimensions, and plotted.
+
+C<amp> controls extrusion amount (eg 8).
 
 See MULTI-RES ARGS for allowed args.
 
@@ -3691,6 +3896,13 @@ Higher generally looks nicer.
 
   my $sharp = make(octaves => 8);
 
+=item * persist => $num
+
+Per-octave amplitude multiplicand (persistence). Traditional and
+default value is .5
+
+  my $grid => make(persist => .25);
+
 =item * stype => $simpleType
 
 Perlin slice type, defaults to C<wavelet>. Any single-res type may be
@@ -3706,7 +3918,7 @@ Dual noise contains two noise sets of the same type.
 
 =over 4
 
-=item * delta(%args)
+=item * delta
 
 =begin HTML
 
@@ -3728,7 +3940,7 @@ override the slice type.
     ltype => "gel"
   );
 
-=item * chiral(%args)
+=item * chiral
 
 =begin HTML
 
@@ -3749,7 +3961,7 @@ override the slice type.
     ltype => "tesla"
   );
 
-=item * stereo(%args)
+=item * stereo
 
 =begin HTML
 
@@ -3997,13 +4209,12 @@ sources.
 
 =head1 COPYRIGHT
 
-  File: Fractal/Noisemaker.pm
+  File: Math/Fractal/Noisemaker.pm
  
-  Copyright (c) 2009 Alex Ayars
- 
-  All rights reserved. This program and the accompanying materials
-  are made available under the terms of the Common Public License v1.0
-  which accompanies this distribution, and is available at
-  http://opensource.org/licenses/cpl1.0.txt
+  Copyright (C) 2009, Alex Ayars <pause@nodekit.org>
+
+  This program is free software; you can redistribute it and/or modify
+  it under the same terms as Perl 5.10.0 or later. See:
+  http://dev.perl.org/licenses/
 
 =cut
