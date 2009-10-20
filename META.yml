@@ -1,19 +1,18 @@
 --- #YAML:1.0
 name:                Math-Fractal-Noisemaker
-version:             0.015
-abstract:            Visual noise generator
-license:             open_source
+version:             0.099_001
+abstract:            ~
+license:             perl
 author:              
     - Alex Ayars <pause@nodekit.org>
 generated_by:        ExtUtils::MakeMaker version 6.42
 distribution_type:   module
 requires:     
     File::Tempdir:                 0.02
-    Imager:                        0.67
-    Math::Complex:                 1.5
+    Imager:                        0.7
+    Math::Complex:                 1.56
     Math::Random::Brownian:        0.03
-    Math::Trig:                    1.2
-    Test::More:                    0.86
+    Test::Simple:                  0.86
 meta-spec:
     url:     http://module-build.sourceforge.net/META-spec-v1.3.html
     version: 1.3
