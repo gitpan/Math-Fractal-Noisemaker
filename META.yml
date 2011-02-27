@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Math-Fractal-Noisemaker
-version:            0.104
+version:            0.105
 abstract:           ~
 author:
     - Alex Ayars <pause@nodekit.org>
